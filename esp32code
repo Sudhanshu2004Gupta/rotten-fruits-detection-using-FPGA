@@ -1,0 +1,22 @@
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+
+char auth[] = "AuthToken";
+char ssid[] = "WiFi";
+char pass[] = "Password";
+
+void setup() {
+  Serial.begin(115200);
+  Blynk.begin(auth, ssid, pass);
+}
+
+void loop() {
+  Blynk.run();
+
+  if(Serial.available()) {
+    char c = Serial.read();
+    if(c == 'R') {
+      Blynk.notify("⚠ Rotten Fruit Detected!");
+    }
+  }
+}
