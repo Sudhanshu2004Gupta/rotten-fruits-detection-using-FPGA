@@ -1,0 +1,144 @@
+module rotten_fruit_system(
+    input clk,                // 50 MHz clock
+    input rst,                // reset
+    input pixel_valid,        // high when pixel is valid
+    input [7:0] r,            // Red from camera
+    input [7:0] g,            // Green from camera
+    input [7:0] b,            // Blue from camera
+    output tx,                // UART TX
+    output reg rotten_led     // LED indication
+);
+
+// ================= PARAMETERS =================
+parameter FRAME_PIXELS = 307200;      // 640x480
+parameter DARK_THRESHOLD = 80;
+parameter ROTTEN_PERCENT = 30;
+parameter CLKS_PER_BIT = 434;         // 115200 baud @50MHz
+
+// ================= REGISTERS =================
+reg [31:0] dark_pixel_count = 0;
+reg [31:0] total_pixel_count = 0;
+reg rotten_flag = 0;
+
+// UART registers
+reg [3:0] uart_state = 0;
+reg [15:0] clk_count = 0;
+reg [3:0] bit_index = 0;
+reg [7:0] tx_data = 0;
+reg tx_reg = 1;
+reg send_uart = 0;
+
+assign tx = tx_reg;
+
+// ================= ROTTEN DETECTION =================
+always @(posedge clk or posedge rst)
+begin
+    if(rst)
+    begin
+        dark_pixel_count <= 0;
+        total_pixel_count <= 0;
+        rotten_flag <= 0;
+        rotten_led <= 0;
+    end
+    else
+    begin
+        if(pixel_valid)
+        begin
+            total_pixel_count <= total_pixel_count + 1;
+
+            if(r < DARK_THRESHOLD && 
+               g < DARK_THRESHOLD && 
+               b < DARK_THRESHOLD)
+                dark_pixel_count <= dark_pixel_count + 1;
+        end
+
+        // Frame End Check
+        if(total_pixel_count >= FRAME_PIXELS)
+        begin
+            if((dark_pixel_count * 100 / total_pixel_count) > ROTTEN_PERCENT)
+            begin
+                rotten_flag <= 1;
+                rotten_led <= 1;
+                send_uart <= 1;
+            end
+            else
+            begin
+                rotten_flag <= 0;
+                rotten_led <= 0;
+            end
+
+            dark_pixel_count <= 0;
+            total_pixel_count <= 0;
+        end
+    end
+end
+
+// ================= UART TRANSMITTER =================
+always @(posedge clk or posedge rst)
+begin
+    if(rst)
+    begin
+        uart_state <= 0;
+        tx_reg <= 1;
+        clk_count <= 0;
+        bit_index <= 0;
+        send_uart <= 0;
+    end
+    else
+    begin
+        case(uart_state)
+
+        0: begin
+            tx_reg <= 1;
+            if(send_uart)
+            begin
+                tx_data <= "R";   // Sending only 'R'
+                uart_state <= 1;
+                send_uart <= 0;
+            end
+        end
+
+        1: begin // Start bit
+            tx_reg <= 0;
+            if(clk_count < CLKS_PER_BIT)
+                clk_count <= clk_count + 1;
+            else
+            begin
+                clk_count <= 0;
+                uart_state <= 2;
+            end
+        end
+
+        2: begin // Data bits
+            tx_reg <= tx_data[bit_index];
+            if(clk_count < CLKS_PER_BIT)
+                clk_count <= clk_count + 1;
+            else
+            begin
+                clk_count <= 0;
+                if(bit_index < 7)
+                    bit_index <= bit_index + 1;
+                else
+                begin
+                    bit_index <= 0;
+                    uart_state <= 3;
+                end
+            end
+        end
+
+        3: begin // Stop bit
+            tx_reg <= 1;
+            if(clk_count < CLKS_PER_BIT)
+                clk_count <= clk_count + 1;
+            else
+            begin
+                clk_count <= 0;
+                uart_state <= 0;
+            end
+        end
+
+        endcase
+    end
+end
+
+endmodule
